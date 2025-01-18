@@ -1,0 +1,24 @@
+# Ignore PyCharm logs and settings
+.idea/
+*.log
+
+# Ignore output directories
+output/
+build/
+dist/
+
+# Ignore Jupyter Notebook files
+*.ipynb
+.vscode/
+.ipynb_checkpoints/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+# Ignore virtual environments
+venv/
+env/
+ENV/    
+training_logs/
