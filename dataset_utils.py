@@ -8,7 +8,9 @@ from sklearn.model_selection import train_test_split
 
 WORD_SEPPER="  "
 DATASET_PATH={"pku":{"train":"/data/dataset/cws/icwb2-data/training/pku_training.utf8",
-                    "test":"/data/dataset/cws/icwb2-data/gold/pku_test_gold.utf8"}
+                    "test":"/data/dataset/cws/icwb2-data/gold/pku_test_gold.utf8"},
+              "law":{"train":"/data/dataset/cws/law-20w/train.utf",
+                      "test":"/data/dataset/cws/law-20w/gold.utf"}
              }
 
 def init_dir(dir_path):
@@ -142,10 +144,11 @@ def get_normal_train_dataloader(tokenizer,
                                 dataset_name="pku",
                                 random_seed=443,
                                 used_collate_fn=cws_Collate_fn,
+                                train_size = 0.9
                                 ):
     train = load_txt(DATASET_PATH[dataset_name]["train"])
     test = load_txt(DATASET_PATH[dataset_name]["test"])
-    train, valid = train_test_split(train,random_state=random_seed, train_size=0.9)
+    train, valid = train_test_split(train,random_state=random_seed, train_size=train_size)
     train_dataset = CWSDataset(train,tokenizer, label_dict, max_length)
     valid_dataset = CWSDataset(valid,tokenizer, label_dict, max_length)
     test_dataset = CWSDataset(test,tokenizer, label_dict, max_length)

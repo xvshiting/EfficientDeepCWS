@@ -36,7 +36,8 @@ Training scripts are in the `scripts` folder. You can run them directly.
 
 | Model | P | R | F1 | Speed |
 | --- | --- | --- | --- | --- |
-| Teacher | 96.38 | 96.38 | 96.38 | 0.12s |
+| Teacher | 97.91 | 97.94 | 97.92 | 0.12s |
+| CNNModel|94.48 | 94.56 | 94.52 | 0.12s |
 | Student | 96.38 | 96.38 | 96.38 | 0.12s |
 | Student (Pruned) | 96.38 | 96.38 | 96.38 | 0.12s |
 | Student (ONNX) | 96.38 | 96.38 | 96.38 | 0.12s |

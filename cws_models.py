@@ -17,13 +17,16 @@ class CWSRoberta(nn.Module):
         # self.activation = nn.ReLU()
         self.classifier = nn.Linear(self.config.cls_hidden_dim, self.config.label_num)
         
-    def forward(self, input_ids, attention_mask,token_type_ids, **kwargs):
+    def forward(self, input_ids, attention_mask,token_type_ids,ret_h=False, **kwargs):
         encoder_output = self.encoder(input_ids = input_ids,
                                 attention_mask = attention_mask,
                                 token_type_ids = token_type_ids)
-        encoder_output = self.dropout(encoder_output.last_hidden_state)
+        h = encoder_output.last_hidden_state
+        cls_input = self.dropout(h)
         # encoder_output = self.activation(encoder_output)
-        logits = self.classifier(encoder_output)
+        logits = self.classifier(cls_input)
+        if ret_h:
+            return h, logits
         return logits
     
 class CWSCNNModelWithEEConfig(PretrainedConfig):
@@ -46,14 +49,16 @@ class ConvClsLayer(nn.Module):
         self.conv1d = nn.Conv1d(in_channels=config.embedding_dim,
                                 out_channels=config.hidden_size,
                                 kernel_size=config.conv1d_kernel,
-                                padding=0)
+                                padding="same")
         self.classifier = nn.Linear(config.hidden_size, config.label_num)
         self.dropout = nn.Dropout(config.dropout_ratio)
         self.activation = nn.ReLU()
     
     def forward(self, x):
+        x = x.permute(0,2,1)
         x = self.conv1d(x)
-        hidden_x = self.activation(x)
+        hidden_x = x.permute(0,2,1)
+        hidden_x = self.activation(hidden_x)
         logits = self.classifier(self.dropout(hidden_x))
         return hidden_x, logits
 
@@ -77,10 +82,10 @@ class CWSCNNModelWithEE(nn.Module):
         self.conv1d_cls_layers = nn.ModuleList()
         self.classifier_list = nn.ModuleList()
         self.embedding = nn.Embedding(21128, self.config.embedding_dim)
-        self.proj_cls = ProjectClsLayer(config)
+        self.proj_cls = ProjectClsLayer(self.config)
         self.dropout = nn.Dropout(self.config.dropout_ratio)
         self.activation = nn.ReLU()
-        for i in range(len(self.config.conv1d_kernel)): 
+        for i in range(self.config.conv1d_cls_layer_num): 
             self.conv1d_cls_layers.append(ConvClsLayer(config))
         
     def forward( self, input_ids:torch.Tensor,**kwargs) -> torch.Tensor:

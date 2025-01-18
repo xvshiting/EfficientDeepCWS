@@ -36,7 +36,7 @@ parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--max_seq_len", type=int, default=500)
 parser.add_argument("--dataset_name", type=str, default="pku")
 # early_stop = True
-parser.add_argument("--early_stop", type=bool, default=True)
+parser.add_argument("--early_stop", action="store_true", default=False)
 # early_stop_num = 10
 parser.add_argument("--early_stop_num", type=int, default=10)
 
@@ -169,7 +169,7 @@ def run_valid(epoch,step_num, save=False):
     print("[Valid] epoch_{}-step_{}, avg  loss: {:.3f}".format(epoch, step_num, loss))
     # 记录到 TensorBoard
     writer.add_scalar("Loss/Valid", loss, step_num)
-    
+    model.train()
     if save:
         is_best = False
         if loss<GlobalHolder.best_valid_loss:
@@ -194,8 +194,8 @@ def run_train(epoch, cur_step_num):
             _data[k] = v.to(device)
         logits = model(**_data)
         loss = compute_loss(logits, _data["label"])
-        clip_grad_norm_(model.parameters(), max_grad_norm)
         loss.backward()
+        clip_grad_norm_(model.parameters(), max_grad_norm)
         optimizer.step()
         # 更新学习率
         scheduler.step()

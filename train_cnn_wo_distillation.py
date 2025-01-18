@@ -7,7 +7,7 @@ import torch
 import numpy as np
 from file_utils import init_dir, delete_file
 import time 
-from cws_models import CWSCNNModel,CWSCNNModelWithEEConfig, model_cls_dict
+from cws_models import CWSCNNModel,CWSCNNModelWithEEConfig, model_cls_dict, CWSCNNModelWithEE, CWSRoberta
 import os 
 from torch.utils.tensorboard import SummaryWriter
 import argparse
@@ -19,7 +19,7 @@ from train_utils import save_checkpoint_util
 from train_utils import set_all_random_seeds
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model_name", type=str, default="CWSCNNModel")
+parser.add_argument("--model_name", type=str, default="CWSCNNModelWithEE")
 parser.add_argument("--random_seed", type=int, default=443)
 parser.add_argument("--lr", type=float, default=1e-4)
 parser.add_argument("--max_grad_norm", type=float, default=1.0)
@@ -35,6 +35,10 @@ parser.add_argument("--warmup_ratio", type=float, default=0.1)
 parser.add_argument("--batch_size", type=int, default=16)
 parser.add_argument("--max_seq_len", type=int, default=500)
 parser.add_argument("--dataset_name", type=str, default="pku")
+# early_stop = True
+parser.add_argument("--early_stop", action="store_true", default=False)
+# early_stop_num = 10
+parser.add_argument("--early_stop_num", type=int, default=10)
 args = parser.parse_args()
 
 #print all args
@@ -66,8 +70,8 @@ cur_time = "-".join(time.asctime().split())
 dataset_name = args.dataset_name
 work_dir = "output/{dataset_name}_{model_name}_lr_{lr}_epoch_{epoch_num}_{time}".format(dataset_name = dataset_name,model_name=model_name, lr=lr,epoch_num=epoch_num, time=cur_time)
 init_dir(work_dir)
-early_stop = True
-early_stop_num = 10 
+early_stop = args.early_stop
+early_stop_num = args.early_stop_num
 
 best_valid_loss = float("inf")
 best_checkpoint_info=dict()
@@ -160,7 +164,7 @@ def run_valid(epoch,step_num, save=False):
     print("[Valid] epoch_{}-step_{}, avg  loss: {:.3f}".format(epoch, step_num, loss))
     # 记录到 TensorBoard
     writer.add_scalar("Loss/Valid", loss, step_num)
-    
+    model.train()
     if save:
         is_best = False
         if loss<GlobalHolder.best_valid_loss:
@@ -185,8 +189,8 @@ def run_train(epoch, cur_step_num):
             _data[k] = v.to(device)
         logits = model(**_data)
         loss = compute_loss(logits, _data["label"])
-        clip_grad_norm_(model.parameters(), max_grad_norm)
         loss.backward()
+        clip_grad_norm_(model.parameters(), max_grad_norm)
         optimizer.step()
         # 更新学习率
         scheduler.step()
