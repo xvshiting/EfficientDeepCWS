@@ -29,3 +29,14 @@ Training scripts are in the `scripts` folder. You can run them directly.
 
 ### ONNX
 - convert_2_onnx.py: Convert the model to ONNX format.
+
+# Result On BenchMark
+
+## PKU (fake data now)
+
+| Model | P | R | F1 | Speed |
+| --- | --- | --- | --- | --- |
+| Teacher | 96.38 | 96.38 | 96.38 | 0.12s |
+| Student | 96.38 | 96.38 | 96.38 | 0.12s |
+| Student (Pruned) | 96.38 | 96.38 | 96.38 | 0.12s |
+| Student (ONNX) | 96.38 | 96.38 | 96.38 | 0.12s |
