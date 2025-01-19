@@ -48,6 +48,9 @@ parser.add_argument("--unlabeled_dataset_name",type=str, default="law")
 parser.add_argument("--early_stop", action="store_true", default=False)
 # early_stop_num = 10
 parser.add_argument("--early_stop_num", type=int, default=10)
+parser.add_argument("--refine", action="store_true", default=False)
+parser.add_argument("--refine_student_model_dir", type=str, default="./output/pku_CWSCNNModelWithEE_Phase_1_lr_0.0001_epoch_50_Sat-Jan-18-23:23:35-2025")
+parser.add_argument("--refine_student_model_name",type=str,default="checkpoint_best.pt" )
 args = parser.parse_args()
 
 #print all args
@@ -60,6 +63,10 @@ print(f"Using {device} device")
 
 loss_fn = nn.CrossEntropyLoss(ignore_index=0)
 
+# refine after prune
+refine_student_model_name = args.refine_student_model_name
+refine_student_model_dir = args.refine_student_model_dir
+refine = args.refine
 
 # Replace hardcoded values with args.xxx
 random_seed = args.random_seed
@@ -110,20 +117,69 @@ writer = SummaryWriter(log_dir=log_dir,)
 set_all_random_seeds(random_seed)
 
 class GlobalHolder:
-    pass
+    best_valid_loss = float("inf")
+    cur_step_num = 0 
+    patient_time = 0
+    best_valid_loss_for_early_stop = float("inf")
+    need_early_stop = None
+    unfrozen_layer_level = None
+    unfrozen_patience_step = None
+    unfrozen_cur_patience_step = 0
+    best_valid_loss_for_unfrozen = float("inf")
+    optimizer = None
+    scheduler = None
 
-def train_initialize():
+def train_initialize_phase_1():
     GlobalHolder.best_valid_loss = float("inf")
     GlobalHolder.cur_step_num = 0 
     GlobalHolder.patient_time = 0
     GlobalHolder.best_valid_loss_for_early_stop = float("inf")
-    GlobalHolder.need_early_stop = False
+    GlobalHolder.need_early_stop = early_stop
     GlobalHolder.unfrozen_layer_level = config.conv1d_cls_layer_num
     GlobalHolder.unfrozen_patience_step = gradual_unfrozen_patience_step
     GlobalHolder.unfrozen_cur_patience_step = 0
     GlobalHolder.best_valid_loss_for_unfrozen = float("inf")
+    GlobalHolder.optimizer = AdamW(student_model.parameters(),lr=lr)
+    GlobalHolder.scheduler = get_scheduler("linear",
+                          optimizer=GlobalHolder.optimizer,
+                          num_warmup_steps=num_warmup_steps,
+                          num_training_steps=num_training_steps)
     if phase_num == 2 and gradual_unfrozen:
         frozen_model_initialize()
+
+def train_initialize_phase_2():
+    GlobalHolder.best_valid_loss = float("inf")
+    GlobalHolder.cur_step_num = 0 
+    GlobalHolder.patient_time = 0
+    GlobalHolder.best_valid_loss_for_early_stop = float("inf")
+    GlobalHolder.need_early_stop = early_stop
+    GlobalHolder.unfrozen_layer_level = config.conv1d_cls_layer_num
+    GlobalHolder.unfrozen_patience_step = gradual_unfrozen_patience_step
+    GlobalHolder.unfrozen_cur_patience_step = 0
+    GlobalHolder.best_valid_loss_for_unfrozen = float("inf")
+    GlobalHolder.optimizer = AdamW(student_model.parameters(),lr=lr)
+    GlobalHolder.scheduler = get_scheduler("linear",
+                          optimizer=GlobalHolder.optimizer,
+                          num_warmup_steps=num_warmup_steps,
+                          num_training_steps=num_training_steps)
+    if phase_num == 2 and gradual_unfrozen:
+        frozen_model_initialize()
+
+def train_initialize_phase_2_subtask():
+    GlobalHolder.best_valid_loss = float("inf")
+    GlobalHolder.cur_step_num = 0 
+    GlobalHolder.patient_time = 0
+    GlobalHolder.best_valid_loss_for_early_stop = float("inf")
+    GlobalHolder.need_early_stop = early_stop
+    # GlobalHolder.unfrozen_layer_level = config.conv1d_cls_layer_num
+    GlobalHolder.unfrozen_patience_step = gradual_unfrozen_patience_step
+    GlobalHolder.unfrozen_cur_patience_step = 0
+    GlobalHolder.best_valid_loss_for_unfrozen = float("inf")
+    GlobalHolder.optimizer = AdamW(student_model.parameters(),lr=lr)
+    GlobalHolder.scheduler = get_scheduler("linear",
+                          optimizer=GlobalHolder.optimizer,
+                          num_warmup_steps=num_warmup_steps,
+                          num_training_steps=num_training_steps)
 last_checkpoint_list = []
 
 # 加载数据集
@@ -146,9 +202,14 @@ num_warmup_steps = int(np.ceil(warmup_ratio * num_training_steps))
 """Revised Load student and teacher model"""
 ## define student model
 config = CWSCNNModelWithEEConfig()
-student_model = CWSCNNModelWithEE(config)
+student_model = CWSCNNModelWithEE(config) #defualt we train a new model
 if phase_num==2: #need load phase 1 model
-    student_model.load_state_dict(torch.load(os.path.join(phase_1_student_model_dir, phase_1_student_model_name))["model_state_dict"])
+    if refine:#load pruned model
+       config = PretrainedConfig.from_json_file(os.path.join(refine_student_model_dir,"config.json")) 
+       student_model = CWSCNNModelWithEE(config)
+       student_model.load_state_dict(torch.load(os.path.join(refine_student_model_dir, refine_student_model_dir))["model_state_dict"])
+    else:#load phase 1 model
+        student_model.load_state_dict(torch.load(os.path.join(phase_1_student_model_dir, phase_1_student_model_name))["model_state_dict"])
 student_model.to(device)
 print(student_model)
 #load teacher model 
@@ -163,11 +224,11 @@ teacher_model.to(device)
 
 
 
-optimizer = AdamW(student_model.parameters(),lr=lr)
-scheduler = get_scheduler("linear",
-                          optimizer=optimizer,
-                          num_warmup_steps=num_warmup_steps,
-                          num_training_steps=num_training_steps)
+# optimizer = AdamW(student_model.parameters(),lr=lr)
+# scheduler = get_scheduler("linear",
+#                           optimizer=optimizer,
+#                           num_warmup_steps=num_warmup_steps,
+#                           num_training_steps=num_training_steps)
 #save config and tokenizer
 config.model_name = model_name
 student_model.config.save_pretrained(work_dir)
@@ -315,9 +376,9 @@ def run_valid_phase_2(epoch,step_num, save=False):
         epoch_loss.append(loss.tolist())
     student_model.train()
     loss = np.mean(epoch_loss)
-    print("[Valid] epoch_{}-step_{}, avg  loss: {:.3f}".format(epoch, step_num, loss))
+    print("[Frozen-{}] [Valid] epoch_{}-step_{}, avg  loss: {:.3f}".format(GlobalHolder.unfrozen_layer_level, epoch, step_num, loss))
     # 记录到 TensorBoard
-    writer.add_scalar("Loss/Valid", loss, step_num)
+    writer.add_scalar("Loss/Valid/fronzen-{}".format(GlobalHolder.unfrozen_layer_level), loss, step_num)
     
     if save:
         is_best = False
@@ -332,11 +393,11 @@ def run_valid_phase_2(epoch,step_num, save=False):
                GlobalHolder.patient_time = 0
         else:
                GlobalHolder.patient_time += 1
-    if gradual_unfrozen and loss<GlobalHolder.best_valid_loss_for_unfrozen:
-        GlobalHolder.best_valid_loss_for_unfrozen = loss 
-        GlobalHolder.unfrozen_cur_patience_step = 0
-    else:
-        GlobalHolder.unfrozen_cur_patience_step += 1
+    # if gradual_unfrozen and loss<GlobalHolder.best_valid_loss_for_unfrozen:
+    #     GlobalHolder.best_valid_loss_for_unfrozen = loss 
+    #     GlobalHolder.unfrozen_cur_patience_step = 0
+    # else:
+    #     GlobalHolder.unfrozen_cur_patience_step += 1
 
 def run_train_phase_1(epoch, cur_step_num):
     epoch_loss = []
@@ -344,7 +405,7 @@ def run_train_phase_1(epoch, cur_step_num):
     # unlabed_dataiter = iter(unlabeled_dataset_loader)
     for _data in unlabeled_dataset_loader["train"]:
         cur_step_num += 1
-        optimizer.zero_grad()
+        GlobalHolder.optimizer.zero_grad()
         for k,v in _data.items():
             _data[k] = v.to(device)
         
@@ -358,16 +419,16 @@ def run_train_phase_1(epoch, cur_step_num):
                                     )
         loss.backward()
         clip_grad_norm_(student_model.parameters(), max_grad_norm)
-        optimizer.step()
+        GlobalHolder.optimizer.step()
         # 更新学习率
-        scheduler.step()
+        GlobalHolder.scheduler.step()
         epoch_loss.append(loss.tolist())
         if cur_step_num%print_step_num==0:
             print("[train] epoch_{}-step_{}, cur step loss: {:3f}, avg epoch loss: {:.3f}".format(epoch, cur_step_num, epoch_loss[-1],
                                                                                               np.mean(epoch_loss)))
                 # 记录到 TensorBoard
             writer.add_scalar("Loss/Train", loss.item(), cur_step_num)
-            writer.add_scalar("Learning Rate", scheduler.get_last_lr()[0], cur_step_num)
+            writer.add_scalar("Learning Rate", GlobalHolder.scheduler.get_last_lr()[0], cur_step_num)
         if cur_step_num % valid_step_num==0:
             is_save = False
             if cur_step_num % save_step_num==0:
@@ -383,7 +444,7 @@ def run_train_phase_2(epoch, cur_step_num):
     unlabeled_dataiter = iter(unlabeled_dataset_loader["train"])
     for _data in labeled_dataset_loader["train"]:
         cur_step_num += 1
-        optimizer.zero_grad()
+        GlobalHolder.optimizer.zero_grad()
         for k,v in _data.items():
             _data[k] = v.to(device)
         
@@ -410,16 +471,16 @@ def run_train_phase_2(epoch, cur_step_num):
         loss = loss_labeled*0.5 + loss_unlabeled*0.5
         loss.backward()
         clip_grad_norm_(student_model.parameters(), max_grad_norm)
-        optimizer.step()
+        GlobalHolder.optimizer.step()
         # 更新学习率
-        scheduler.step()
+        GlobalHolder.scheduler.step()
         epoch_loss.append(loss.tolist())
         if cur_step_num%print_step_num==0:
-            print("[train] epoch_{}-step_{}, cur step loss: {:3f}, avg epoch loss: {:.3f}".format(epoch, cur_step_num, epoch_loss[-1],
+            print("[Frozen-{}] [train] epoch_{}-step_{}, cur step loss: {:3f}, avg epoch loss: {:.3f}".format(GlobalHolder.unfrozen_layer_level, epoch, cur_step_num, epoch_loss[-1],
                                                                                               np.mean(epoch_loss)))
                 # 记录到 TensorBoard
-            writer.add_scalar("Loss/Train", loss.item(), cur_step_num)
-            writer.add_scalar("Learning Rate", scheduler.get_last_lr()[0], cur_step_num)
+            writer.add_scalar("Loss/Train/frozen-{}".format(GlobalHolder.unfrozen_layer_level), loss.item(), cur_step_num)
+            writer.add_scalar("Learning Rate/fronzen-{}".format(GlobalHolder.unfrozen_layer_level), GlobalHolder.scheduler.get_last_lr()[0], cur_step_num)
         if cur_step_num % valid_step_num==0:
             is_save = False
             if cur_step_num % save_step_num==0:
@@ -427,15 +488,41 @@ def run_train_phase_2(epoch, cur_step_num):
             run_valid_phase_2(epoch, cur_step_num, is_save)    
             if early_stop and GlobalHolder.patient_time>=early_stop_num:
                 break  
-            if gradual_unfrozen and GlobalHolder.unfrozen_cur_patience_step>GlobalHolder.unfrozen_patience_step:
-                GlobalHolder.unfrozen_layer_level -= 1
-                if GlobalHolder.unfrozen_layer_level>=0:
-                    unfrozen_layer() 
+            # if gradual_unfrozen and GlobalHolder.unfrozen_cur_patience_step>GlobalHolder.unfrozen_patience_step:
+            #     GlobalHolder.unfrozen_layer_level -= 1
+            #     if GlobalHolder.unfrozen_layer_level>=0:
+            #         unfrozen_layer() 
     return dict(cur_step_num=cur_step_num, epoch_loss=epoch_loss)
 
+def train_phase_2_ungradual_unfrozen():
+    train_initialize_phase_2()
+    for unfrozen_layer_level in range(6,-1,-1):
+        GlobalHolder.unfrozen_layer_level = unfrozen_layer_level
+        unfrozen_layer()
+        train_initialize_phase_2_subtask()
+        for epoch in range(1, epoch_num+1):
+            print("[Frozen-{}] Epoch {}".format(GlobalHolder.unfrozen_layer_level, epoch))
+            train_info = run_train_phase_2(epoch, GlobalHolder.cur_step_num)
+            GlobalHolder.cur_step_num  = train_info["cur_step_num"]
+            if GlobalHolder.patient_time>=early_stop_num:
+                print("[Frozen-{}] Early stop at epoch {} step {}!".format(GlobalHolder.unfrozen_layer_level,  epoch, GlobalHolder.cur_step_num))
+                break
+            avg_epoch_loss = np.mean(train_info["epoch_loss"])
+            print("[Frozen-{}][train] epoch_{}-step_{}, avg epoch loss: {:.3f}".format(GlobalHolder.unfrozen_layer_level, epoch, 
+                                                                            GlobalHolder.cur_step_num,
+                                                                            avg_epoch_loss))
+            # 记录 epoch 的平均训练损失
+            writer.add_scalar("Loss/Train_Epoch/fronzen-{}".format(GlobalHolder.unfrozen_layer_level), avg_epoch_loss, epoch)
+            run_valid_phase_2(epoch, GlobalHolder.cur_step_num, True) 
+    # 关闭 TensorBoard
+    writer.close()
+
+
+                                
 def train_phase_2():
-    train_initialize()
+    train_initialize_phase_2()
     for epoch in range(1, epoch_num+1):
+        
         print("Epoch {}".format(epoch))
         train_info = run_train_phase_2(epoch, GlobalHolder.cur_step_num)
         GlobalHolder.cur_step_num  = train_info["cur_step_num"]
@@ -447,13 +534,13 @@ def train_phase_2():
                                                                         GlobalHolder.cur_step_num,
                                                                         avg_epoch_loss))
         # 记录 epoch 的平均训练损失
-        writer.add_scalar("Loss/Train_Epoch", avg_epoch_loss, epoch)
+        writer.add_scalar("Loss/Train_Epoch/fronzen-{}".format(GlobalHolder.unfrozen_layer_level), avg_epoch_loss, epoch)
         run_valid_phase_2(epoch, GlobalHolder.cur_step_num, True) 
     # 关闭 TensorBoard
     writer.close()
 
 def train_phase_1():
-    train_initialize()
+    train_initialize_phase_1()
     for epoch in range(1, epoch_num+1):
         print("Epoch {}".format(epoch))
         train_info = run_train_phase_1(epoch, GlobalHolder.cur_step_num)
@@ -472,6 +559,9 @@ def train_phase_1():
     writer.close()
 
 if phase_num ==2:
-    train_phase_2() 
+    if gradual_unfrozen:
+        train_phase_2_ungradual_unfrozen()
+    else:
+        train_phase_2() 
 elif phase_num == 1:
     train_phase_1()
