@@ -42,15 +42,17 @@ class CWSCNNModelWithEEConfig(PretrainedConfig):
         self.ee = kwargs['ee'] if 'ee' in kwargs else True
         self.conv1d_kernel = kwargs['conv1d_kernel'] if 'conv1d_kernel' in kwargs else 3
         self.conv1d_cls_layer_num = kwargs['conv1d_cls_layer_num'] if 'conv1d_cls_layer_num' in kwargs else 6
+        self.conv1d_cls_in_channel_size_list = [300]*self.conv1d_cls_layer_num # for prune
+        self.conv1d_cls_out_channel_size_list = [300]*self.conv1d_cls_layer_num # for prune
 
 class ConvClsLayer(nn.Module):
-    def __init__(self, config,  **kwargs):
+    def __init__(self, config, in_channel_size, out_channel_size,  **kwargs):
         super().__init__()
-        self.conv1d = nn.Conv1d(in_channels=config.embedding_dim,
-                                out_channels=config.hidden_size,
+        self.conv1d = nn.Conv1d(in_channels=in_channel_size,
+                                out_channels=out_channel_size,
                                 kernel_size=config.conv1d_kernel,
                                 padding="same")
-        self.classifier = nn.Linear(config.hidden_size, config.label_num)
+        self.classifier = nn.Linear(out_channel_size, config.label_num)
         self.dropout = nn.Dropout(config.dropout_ratio)
         self.activation = nn.ReLU()
     
@@ -63,12 +65,12 @@ class ConvClsLayer(nn.Module):
         return hidden_x, logits
 
 class ProjectClsLayer(nn.Module):
-    def __init__(self, config, **kwargs):
+    def __init__(self, config, input_hidden_size, **kwargs):
         super().__init__()
         self.config = config
         self.classifier = nn.Linear(self.config.proj_hidden_dim, self.config.label_num)
         self.dropout = nn.Dropout(self.config.dropout_ratio) 
-        self.projection_layer = nn.Linear(self.config.hidden_size, self.config.proj_hidden_dim)
+        self.projection_layer = nn.Linear(input_hidden_size, self.config.proj_hidden_dim)
     
     def forward(self, x):
         hidden_x = self.projection_layer(x)
@@ -82,11 +84,14 @@ class CWSCNNModelWithEE(nn.Module):
         self.conv1d_cls_layers = nn.ModuleList()
         self.classifier_list = nn.ModuleList()
         self.embedding = nn.Embedding(21128, self.config.embedding_dim)
-        self.proj_cls = ProjectClsLayer(self.config)
+        self.proj_cls = ProjectClsLayer(self.config,input_hidden_size=config.conv1d_cls_out_channel_size_list[-1])
         self.dropout = nn.Dropout(self.config.dropout_ratio)
         self.activation = nn.ReLU()
         for i in range(self.config.conv1d_cls_layer_num): 
-            self.conv1d_cls_layers.append(ConvClsLayer(config))
+            self.conv1d_cls_layers.append(ConvClsLayer(config,
+                                                       in_channel_size=config.conv1d_cls_in_channel_size_list[i],
+                                                       out_channel_size=config.conv1d_cls_out_channel_size_list[i],
+                                                       ))
         
     def forward( self, input_ids:torch.Tensor,**kwargs) -> torch.Tensor:
         input_x = self.embedding(input_ids)

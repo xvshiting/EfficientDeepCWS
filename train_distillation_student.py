@@ -34,7 +34,7 @@ parser.add_argument("--print_step_num", type=int, default=300)
 parser.add_argument("--pretrianed_model_path", type=str, default="/data/model_hub/chinese-roberta-wwm-ext")
 parser.add_argument("--teacher_model_dir", type=str, default="./output/pku_CWSRoberta_lr_5e-05_epoch_50_Fri-Jan-17-22:35:28-2025")
 parser.add_argument("--teacher_model_name", type=str, default="checkpoint_best.pt")
-parser.add_argument("--phase_1_student_model_dir", type=str, default="./output/pku_CWSRoberta_lr_5e-05_epoch_50_Fri-Jan-17-22:35:28-2025")
+parser.add_argument("--phase_1_student_model_dir", type=str, default="./output/pku_CWSCNNModelWithEE_Phase_1_lr_0.0001_epoch_50_Sat-Jan-18-23:23:35-2025")
 parser.add_argument("--phase_1_student_model_name",type=str,default="checkpoint_best.pt" )
 parser.add_argument("--gradual_unfrozen", action="store_true", default=False)
 parser.add_argument("--gradual_unfrozen_patience_step", type=int, default=5)
@@ -148,8 +148,9 @@ num_warmup_steps = int(np.ceil(warmup_ratio * num_training_steps))
 config = CWSCNNModelWithEEConfig()
 student_model = CWSCNNModelWithEE(config)
 if phase_num==2: #need load phase 1 model
-    student_model.load_state_dict(torch.load(os.path.join(phase_1_student_model_dir, phase_1_student_model_name)["model_state_dict"]))
+    student_model.load_state_dict(torch.load(os.path.join(phase_1_student_model_dir, phase_1_student_model_name))["model_state_dict"])
 student_model.to(device)
+print(student_model)
 #load teacher model 
 teacher_config = PretrainedConfig.from_json_file(os.path.join(teacher_model_dir,"config.json"))
 teacher_checkpoint_path = os.path.join(teacher_model_dir, teacher_model_name)
@@ -174,10 +175,10 @@ my_tokenizer.save_pretrained(work_dir)
 
 def frozen_model_initialize():
     """frozen all layers except top layer"""
-    for name, param in student_model.embedding.parameters():
+    for param in student_model.embedding.parameters():
             param.requires_grad = False 
     for layer in student_model.conv1d_cls_layers:
-        for name, param in layer.parameters():
+        for param in layer.parameters():
             param.requires_grad = False
     print("[Frozen] all layer except projection classification layer!")
         
@@ -187,16 +188,16 @@ def unfrozen_layer():
     GlobalHolder.unfrozen_cur_patience_step = 0
     GlobalHolder.best_valid_loss_for_unfrozen = float("inf")
     GlobalHolder.best_valid_loss_for_early_stop = float("inf")
-    if GlobalHolder.unfronzen_layer_level==0:
-        for name, param in  student_model.conv1d_cls_layers[0].parameters() :
+    if GlobalHolder.unfrozen_layer_level==0:
+        for param in  student_model.conv1d_cls_layers[0].parameters() :
             param.requires_grad = True
-        for name, param in student_model.embedding.parameters():
+        for  param in student_model.embedding.parameters():
             param.requires_grad = True
-        print("[Unfrozen] layer {} and embedding, all layers have been unfrozen!".format(GlobalHolder.unfronzen_layer_level+1))
-    elif GlobalHolder.unfronzen_layer_level<=5 and GlobalHolder.unfronzen_layer_level>=1:
-        for name, param in  student_model.conv1d_cls_layers[GlobalHolder.unfronzen_layer_level].parameters() :
+        print("[Unfrozen] layer {} and embedding, all layers have been unfrozen!".format(GlobalHolder.unfrozen_layer_level+1))
+    elif GlobalHolder.unfrozen_layer_level<=5 and GlobalHolder.unfrozen_layer_level>=1:
+        for param in  student_model.conv1d_cls_layers[GlobalHolder.unfrozen_layer_level].parameters() :
             param.requires_grad = True
-        print("[Unfrozen] layer {}".format(GlobalHolder.unfronzen_layer_level+1))
+        print("[Unfrozen] layer {}".format(GlobalHolder.unfrozen_layer_level+1))
 
 def compute_ce_loss(logits, labels):
     batch, max_seq_len, _ = logits.shape
@@ -228,14 +229,21 @@ def compute_phase_2_loss(logits_student_list,
                          attention_mask=None,
                          label = None):
     """ label = None compute for unlabed data and mse loss will be used, otherwise compute loss for labeled data and crossentropy loss will be used!"""
-    loss_list = []
-    for ind in range(GlobalHolder.unfrozen_layer_level, len(logits_student_list)):
-        if label:
-            loss_list.append(compute_ce_loss(logits_student_list[ind], label))
-        else:
-            loss_list.append(compute_mse_loss_with_mask(logits_student_list[ind], logits_teacher, attention_mask)) #unlabeled data
-    loss = torch.mean(loss_list)
-    return loss 
+    # 获取起始层
+    start_layer = getattr(GlobalHolder, "unfrozen_layer_level", 0)
+    if start_layer < 0 or start_layer >= len(logits_student_list):
+        raise ValueError(f"`unfrozen_layer_level` ({start_layer}) is out of range for logits_student_list of length {len(logits_student_list)}.")
+    
+    total_loss = 0.0
+    for ind in range(start_layer, len(logits_student_list)):
+        if label is not None:  # 有标签数据
+            total_loss += compute_ce_loss(logits_student_list[ind], label)
+        else:  # 无标签数据
+            total_loss += compute_mse_loss_with_mask(logits_teacher,logits_student_list[ind], attention_mask)
+    
+    # 计算平均损失
+    mean_loss = total_loss / (len(logits_student_list) - start_layer)
+    return mean_loss
 
 
 def save_checkpoint( loss,  epoch, step, is_best = False):
@@ -372,7 +380,7 @@ def run_train_phase_1(epoch, cur_step_num):
 def run_train_phase_2(epoch, cur_step_num):
     epoch_loss = []
     student_model.train()
-    unlabed_dataiter = iter(unlabeled_dataset_loader)
+    unlabeled_dataiter = iter(unlabeled_dataset_loader["train"])
     for _data in labeled_dataset_loader["train"]:
         cur_step_num += 1
         optimizer.zero_grad()
@@ -386,21 +394,20 @@ def run_train_phase_2(epoch, cur_step_num):
                                     label = _data["label"])
         
         try:
-            unlabeled_data = next(unlabeled_dataset_loader)
+            unlabeled_data = next(unlabeled_dataiter)
         except StopIteration:
-            unlabed_dataiter = iter(unlabeled_dataset_loader)  # 重新初始化
-            unlabeled_data = next(unlabed_dataiter)
+            unlabed_dataiter = iter(unlabeled_dataset_loader["train"])  # 重新初始化
+            unlabeled_data = next(unlabeled_dataiter)
         for k,v in unlabeled_data.items():
             unlabeled_data[k] = v.to(device)
-        unlabeled_student_ret = student_model(**_data)
-        unlabeled_student_rep = unlabeled_student_ret["hidden_x"]
+        unlabeled_student_ret = student_model(**unlabeled_data)
         unlabeled_student_logits_list = unlabeled_student_ret["logits_list"]
-        teacher_rep, teacher_logits = teacher_model(**unlabeled_data, ret_h=True)
-        loss_unlabeled = compute_phase_2_loss(unlabeled_student_logits_list,
-                                    teacher_logits,
-                                    unlabeled_data["attention_mask"],
+        _, teacher_logits = teacher_model(**unlabeled_data, ret_h=True)
+        loss_unlabeled = compute_phase_2_loss(logits_student_list = unlabeled_student_logits_list,
+                                    logits_teacher = teacher_logits,
+                                    attention_mask = unlabeled_data["attention_mask"],
                                     )
-        loss = torch.mean([loss_labeled, loss_unlabeled])
+        loss = loss_labeled*0.5 + loss_unlabeled*0.5
         loss.backward()
         clip_grad_norm_(student_model.parameters(), max_grad_norm)
         optimizer.step()
