@@ -12,14 +12,16 @@ from eval_utils import cws_evaluate_word_PRF
 import re 
 
 class Segmentor:
-    def __init__(self, model_dir, device="cpu", max_length=500):
+    def __init__(self, model_dir, device="cpu", max_length=500, thres=0.5):
         self.device = device
+        self.thres = 0.5
         self.load_cws_model(model_dir)
         self.max_length = max_length
         
     def load_cws_model(self, model_dir, checkpoint_name="checkpoint_best.pt"):
         self.config = PretrainedConfig.from_json_file(os.path.join(model_dir,"config.json"))
         self.checkpoint_path = os.path.join(model_dir, checkpoint_name)
+        self.model_name = self.config.model_name
         self.model_cls = model_cls_dict[self.config.model_name]
         self.model = self.model_cls(self.config)
         self.model.load_state_dict(torch.load(self.checkpoint_path)["model_state_dict"])
@@ -28,7 +30,7 @@ class Segmentor:
         self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
         self.label_dict = label_dict
     
-    def predict_logits(self, sentence):
+    def predict_logits(self, sentence, force_layer=None, thres=None):
         sentence = sentence.strip().replace("  "," ")
         # print(sentence)
         sentence = sentence[:self.max_length]
@@ -40,19 +42,31 @@ class Segmentor:
         for k,v in inputs.items():
             inputs[k] = torch.LongTensor([v])
             inputs[k] = inputs[k].to(self.device)
-        logits = self.model(**inputs)
-        return sentence, logits
+        if self.model_name=="CWSCNNModelWithEE":
+            _thres = thres if thres is not None else self.thres
+            ret = self.model.predict(**inputs, thres=_thres, force_layer=force_layer )
+            ret["sentence"] = sentence
+            return ret
+        else:
+            logits = self.model(**inputs)
+            return {"sentence":sentence,
+                    "logits": logits}
 
-    def __call__(self, sentence):
-        sentence, logits = self.predict_logits(sentence)
-        preds  = torch.argmax(logits,dim=-1)
+    def __call__(self, sentence, thres=None, force_layer=None, verbose=False):
+        with torch.no_grad():
+            pred_result = self.predict_logits(sentence, thres=thres, force_layer=force_layer)
+            logits = pred_result["logits"]
+            preds  = torch.argmax(logits,dim=-1)
         # print(preds)
         preds_list = preds.tolist()[0][1:-1]
         # print(preds_list)
         labels = label_dict.convert_ids2labels(preds_list)
         # print(len(sentence),len(labels))
         words_list = bmes_2_words(sentence, labels)
-        return self.post_process_text(words_list)
+        if not verbose:
+            return self.post_process_text(words_list)
+        else:
+            return self.post_process_text(words_list), pred_result
         
     def post_process_text(self, segmented_words):
         """
@@ -85,14 +99,20 @@ class Segmentor:
         return processed_words
         
 
-    def test(self, dataiter):
+    def test(self, dataiter,thres=0.5, force_layer=None, verbose=False, single=False):
         label_list = []
         preds_list  = []
+        pred_info = []
         for _data in dataiter["valid"]:
             for k,v in _data.items():
                 _data[k] = v.to(self.device)
             with torch.no_grad():
-                logits = self.model(**_data)
+                if self.model_name=="CWSCNNModelWithEE":
+                    ret = self.model.predict(**_data, thres=thres, force_layer=force_layer )
+                    logits = ret["logits"]
+                    pred_info.append(ret)
+                else:
+                    logits = self.model(**_data)
                 preds  = torch.argmax(logits,dim=-1)
                 label_list.extend(_data["label"].tolist())
                 preds_list.extend(preds.tolist())
@@ -111,4 +131,7 @@ class Segmentor:
         new_label_list_str = label_dict.convert_ids2labels(new_label_list)
         new_preds_list_str = label_dict.convert_ids2labels(new_preds_list)
         cws_evaluate_word_PRF(new_preds_list_str, new_label_list_str)
+        if verbose:
+            return pred_info
+
         

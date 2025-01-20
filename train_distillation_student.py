@@ -298,12 +298,13 @@ def compute_phase_2_loss(logits_student_list,
     total_loss = 0.0
     for ind in range(start_layer, len(logits_student_list)):
         if label is not None:  # 有标签数据
-            total_loss += compute_ce_loss(logits_student_list[ind], label)
+            total_loss += (ind+1)*compute_ce_loss(logits_student_list[ind], label)
         else:  # 无标签数据
-            total_loss += compute_mse_loss_with_mask(logits_teacher,logits_student_list[ind], attention_mask)
+            total_loss += (ind+1)*compute_mse_loss_with_mask(logits_teacher,logits_student_list[ind], attention_mask)
     
     # 计算平均损失
-    mean_loss = total_loss / (len(logits_student_list) - start_layer)
+    # mean_loss = total_loss / (len(logits_student_list) - start_layer)
+    mean_loss = total_loss / sum(list(range(start_layer+1, len(logits_student_list)+1)))
     return mean_loss
 
 

@@ -2,6 +2,20 @@ from transformers import  BertModel
 from torch import nn
 from transformers import PretrainedConfig
 import torch
+def get_entropy(x):
+    # x: torch.Tensor, logits BEFORE softmax
+    exp_x = torch.exp(x)
+    A = torch.sum(exp_x, dim=1)    # sum of exp(x_i)
+    B = torch.sum(x*exp_x, dim=1)  # sum of x_i * exp(x_i)
+    return torch.log(A) - B/A
+
+import math
+def get_uncertainty(x):
+    x = x[:,:,1:]
+    # x: torch.Tensor, logits BEFORE softmax
+    num_tags = x.size(-1)
+    entropy_x = get_entropy(x)
+    return entropy_x/math.log(num_tags)
 
 class CWSRoberta(nn.Module):
     def __init__(self,
@@ -105,6 +119,51 @@ class CWSCNNModelWithEE(nn.Module):
         return {"hidden_x":hidden_x, 
                 "logits_list":logits_list}
     
+    def predict(self, input_ids:torch.Tensor,
+                thres=0.5,
+                force_layer = None,
+                **kwargs):
+        """
+        force_layer:0,1,2,3,4,5,6
+        """
+        logits = None 
+        uncertain_score_list = []
+        is_force = False
+        if force_layer is not None:
+            force_layer = max(0,min(force_layer,6))
+         #early exit with uncertainty
+        input_x = self.embedding(input_ids) 
+        for ind, layer in enumerate(self.conv1d_cls_layers):
+            if force_layer is not None and force_layer<ind: # 0<1 exit, 0=0 continue, 2>1 continue. 
+                is_force=True
+                break
+            input_x, logits = layer(input_x)
+            # p = torch.softmax(logits[:,0:-1,1:],  dim=-1) #1*len *C
+            # U_s = -p*torch.log(p)/torch.log(torch.LongTensor(4))
+            # U_s.sum(dim=-1)
+            # # print(U_s.shape)
+            # U_s.max(dim=1)
+            U_s = get_uncertainty(logits)
+            # print(U_s.shape)
+            U_s = torch.max(U_s)
+            uncertain_score_list.append(U_s)
+            if force_layer is None and U_s<thres:
+                break
+        else:
+            hidden_x, logits = self.proj_cls(input_x)
+            ind = 7
+        return {"logits":logits,
+                "exit_layer":ind, 
+                "uncertainty_score":uncertain_score_list,
+                "is_force":is_force
+        }
+
+
+
+
+
+                
+    
 
 class CWSCNNModel(nn.Module): 
     def __init__(self, config:CWSCNNModelWithEEConfig, *args, **kwargs):
@@ -134,7 +193,11 @@ class CWSCNNModel(nn.Module):
             input_x = self.dropout(input_x)
         input_x = input_x.permute(0,2,1)
         hidden_x, logits = self.proj_cls(input_x)
-        return logits 
+        return logits
+
+    
+
+
 
 model_cls_dict = {"CWSCNNModel":CWSCNNModel,
                   "CWSCNNModelWithEE":CWSCNNModelWithEE,
