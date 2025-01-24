@@ -128,6 +128,7 @@ class GlobalHolder:
     best_valid_loss_for_unfrozen = float("inf")
     optimizer = None
     scheduler = None
+    unlabeled_dataiter = None
 
 def train_initialize_phase_1():
     GlobalHolder.best_valid_loss = float("inf")
@@ -450,7 +451,11 @@ def run_train_phase_1(epoch, cur_step_num):
 def run_train_phase_2(epoch, cur_step_num):
     epoch_loss = []
     student_model.train()
-    unlabeled_dataiter = iter(unlabeled_dataset_loader["train"])
+    if GlobalHolder.unlabeled_dataiter:
+        unlabeled_dataiter = GlobalHolder.unlabeled_dataiter
+    else:
+        unlabeled_dataiter = iter(unlabeled_dataset_loader["train"])
+        GlobalHolder.unlabeled_dataiter = unlabeled_dataiter
     for _data in labeled_dataset_loader["train"]:
         cur_step_num += 1
         GlobalHolder.optimizer.zero_grad()
@@ -466,8 +471,9 @@ def run_train_phase_2(epoch, cur_step_num):
         try:
             unlabeled_data = next(unlabeled_dataiter)
         except StopIteration:
-            unlabed_dataiter = iter(unlabeled_dataset_loader["train"])  # 重新初始化
+            unlabeled_dataiter = iter(unlabeled_dataset_loader["train"])  # 重新初始化
             unlabeled_data = next(unlabeled_dataiter)
+            GlobalHolder.unlabeled_dataiter = unlabeled_dataiter
         for k,v in unlabeled_data.items():
             unlabeled_data[k] = v.to(device)
         unlabeled_student_ret = student_model(**unlabeled_data)

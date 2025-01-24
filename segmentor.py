@@ -155,8 +155,13 @@ class Segmentor:
                     continue
         new_label_list_str = label_dict.convert_ids2labels(new_label_list)
         new_preds_list_str = label_dict.convert_ids2labels(new_preds_list)
-        cws_evaluate_word_PRF(new_preds_list_str, new_label_list_str)
+        prec,rec,f1 =  cws_evaluate_word_PRF(new_preds_list_str, new_label_list_str)
+        pred_info["precision"] = prec
+        pred_info["recall"] = rec 
+        pred_info["f1"] = f1 
         if verbose:
             return pred_info
+        else:
+            return {"precision":prec, "recall":rec, "f1":f1}
 
         
