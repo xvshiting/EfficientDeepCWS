@@ -99,7 +99,7 @@ class Segmentor:
         return processed_words
         
 
-    def test(self, dataiter,thres=0.5, force_layer=None, verbose=False, single=False):
+    def test(self, dataiter,thres=0.5, force_layer=None, verbose=False, single=False, logits_strategy="last",logits_weight_list=[1,2,3,4,5,6,7]):
         label_list = []
         preds_list  = []
         pred_info = []
@@ -109,7 +109,32 @@ class Segmentor:
             with torch.no_grad():
                 if self.model_name=="CWSCNNModelWithEE":
                     ret = self.model.predict(**_data, thres=thres, force_layer=force_layer )
-                    logits = ret["logits"]
+                    if logits_strategy=="mean":
+                        # 将所有张量堆叠到一起
+                        stacked_tensors = torch.stack(ret["logits_list"], dim=0)  # 形状为 (num_tensors, *tensor_shape)
+                        # 对第 0 维进行平均
+                        logits = torch.mean(stacked_tensors, dim=0)
+                    elif logits_strategy=="last":
+                        logits = ret["logits"]
+                    elif logits_strategy=="max":
+                        # 将所有张量堆叠到一起
+                        stacked_tensors = torch.stack(ret["logits_list"], dim=0)  # 形状为 (num_tensors, *tensor_shape)
+                        # 对第 0 维进行平均
+                        logits, _ = torch.max(stacked_tensors, dim=0)
+                    elif logits_strategy=="min":
+                        # 将所有张量堆叠到一起
+                        stacked_tensors = torch.stack(ret["logits_list"], dim=0)  # 形状为 (num_tensors, *tensor_shape)
+                        # 对第 0 维进行平均
+                        logits, _ = torch.min(stacked_tensors, dim=0)
+                    elif logits_strategy=="weighted":
+                        # print(ret["logits"].shape)
+                        stacked_tensors = torch.stack(ret["logits_list"], dim=0) 
+                        # print(stacked_tensors.shape)
+                        _logits_weight_list = torch.tensor(logits_weight_list[:len(ret["logits_list"])])
+                        weights = _logits_weight_list.view(-1, 1, 1, 1)
+                        # print(weights.shape)
+                        logits = (stacked_tensors * weights).sum(dim=0)
+                        # print(logits.shape)
                     pred_info.append(ret)
                 else:
                     logits = self.model(**_data)

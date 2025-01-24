@@ -8,9 +8,20 @@ from sklearn.model_selection import train_test_split
 
 WORD_SEPPER="  "
 DATASET_PATH={"pku":{"train":"/data/dataset/cws/icwb2-data/training/pku_training.utf8",
-                    "test":"/data/dataset/cws/icwb2-data/gold/pku_test_gold.utf8"},
+                    "test":"/data/dataset/cws/icwb2-data/gold/pku_test_gold.utf8",
+                    "word_sep":"  "},
               "law":{"train":"/data/dataset/cws/law-20w/train.utf",
-                      "test":"/data/dataset/cws/law-20w/gold.utf"}
+                      "test":"/data/dataset/cws/law-20w/gold.utf",
+                      "word_sep":"  "},
+              "msr":{"train":"/data/dataset/cws/icwb2-data/training/msr_training.utf8",
+                     "test":"/data/dataset/cws/icwb2-data/gold/msr_test_gold.utf8",
+                     "word_sep":"  "},
+              "as":{"train":"/data/dataset/cws/icwb2-data/training/as_training.utf8",
+                    "test":"/data/dataset/cws/icwb2-data/gold/as_testing_gold.utf8",
+                    "word_sep":"\u3000"},
+              "cityu":{"train":"/data/dataset/cws/icwb2-data/training/cityu_training.utf8",
+                       "test":"/data/dataset/cws/icwb2-data/gold/cityu_test_gold.utf8",
+                       "word_sep":" "}
              }
 
 def init_dir(dir_path):
@@ -29,8 +40,8 @@ def load_txt(txt_path):
                 content.append(line.strip())
     return content 
 
-def words_2_bmes(splited_sentence_str):
-    word_list = splited_sentence_str.split(WORD_SEPPER)
+def words_2_bmes(splited_sentence_str, word_sep=WORD_SEPPER):
+    word_list = splited_sentence_str.split(word_sep)
     labels = []
     valid_word_list = []
     for word in word_list:
@@ -100,18 +111,28 @@ class LabelDict:
         return labels
 
 class CWSDataset(Dataset):
-    def __init__(self, datalist, tokenizer, label_dict, max_length=500, labeled=True):
+    def __init__(self, datalist,
+                        tokenizer, 
+                        label_dict, 
+                        max_length=500, 
+                        labeled=True,
+                        dataset_name = None):
         self.datalist = datalist
         self.sample_size = len(datalist)
         self.tokenizer = tokenizer
         self.label_dict = label_dict 
         self.max_length = max_length
         self.labeled=labeled
+        self.dataset_name = dataset_name
     def __len__(self):
         return self.sample_size
 
     def __getitem__(self,ind):
-        res = words_2_bmes(self.datalist[ind]) # if it not labeled ,the res label will be "BMMMMM...E"
+        if self.dataset_name  and self.dataset_name in DATASET_PATH:
+            word_sep = DATASET_PATH[self.dataset_name]["word_sep"]
+            res = words_2_bmes(self.datalist[ind], word_sep=word_sep)
+        else:
+            res = words_2_bmes(self.datalist[ind]) # if it not labeled ,the res label will be "BMMMMM...E"
         input_dict = self.tokenizer.encode_plus(" ".join(list(res["sentence"])), truncation=True, max_length=self.max_length)
         #alingment
         if self.labeled:
@@ -149,9 +170,9 @@ def get_normal_train_dataloader(tokenizer,
     train = load_txt(DATASET_PATH[dataset_name]["train"])
     test = load_txt(DATASET_PATH[dataset_name]["test"])
     train, valid = train_test_split(train,random_state=random_seed, train_size=train_size)
-    train_dataset = CWSDataset(train,tokenizer, label_dict, max_length)
-    valid_dataset = CWSDataset(valid,tokenizer, label_dict, max_length)
-    test_dataset = CWSDataset(test,tokenizer, label_dict, max_length)
+    train_dataset = CWSDataset(train,tokenizer, label_dict, max_length, dataset_name=dataset_name)
+    valid_dataset = CWSDataset(valid,tokenizer, label_dict, max_length, dataset_name=dataset_name)
+    test_dataset = CWSDataset(test,tokenizer, label_dict, max_length, dataset_name=dataset_name)
     ret = {"train":DataLoader(train_dataset,
                                          collate_fn=used_collate_fn,
                                          shuffle=shuffle,

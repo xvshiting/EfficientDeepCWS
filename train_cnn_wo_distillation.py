@@ -19,7 +19,7 @@ from train_utils import save_checkpoint_util
 from train_utils import set_all_random_seeds
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model_name", type=str, default="CWSCNNModelWithEE")
+parser.add_argument("--model_name", type=str, default="CWSCNNModel")
 parser.add_argument("--random_seed", type=int, default=443)
 parser.add_argument("--lr", type=float, default=1e-4)
 parser.add_argument("--max_grad_norm", type=float, default=1.0)

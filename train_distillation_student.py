@@ -205,11 +205,19 @@ config = CWSCNNModelWithEEConfig()
 student_model = CWSCNNModelWithEE(config) #defualt we train a new model
 if phase_num==2: #need load phase 1 model
     if refine:#load pruned model
-       config = PretrainedConfig.from_json_file(os.path.join(refine_student_model_dir,"config.json")) 
-       student_model = CWSCNNModelWithEE(config)
-       student_model.load_state_dict(torch.load(os.path.join(refine_student_model_dir, refine_student_model_dir))["model_state_dict"])
+        config = PretrainedConfig.from_json_file(os.path.join(refine_student_model_dir,"config.json")) 
+        student_model = CWSCNNModelWithEE(config)
+        if os.path.exists(refine_student_model_dir):
+           student_model.load_state_dict(torch.load(os.path.join(refine_student_model_dir, refine_student_model_dir))["model_state_dict"])
+        else:
+            print("Pruned model dir {} not valid! training from new!".format(refine_student_model_dir))
+           
     else:#load phase 1 model
-        student_model.load_state_dict(torch.load(os.path.join(phase_1_student_model_dir, phase_1_student_model_name))["model_state_dict"])
+        if os.path.exists(phase_1_student_model_dir): # phase_1_student_model_dir not none then load ,else train from brand new model.
+            student_model.load_state_dict(torch.load(os.path.join(phase_1_student_model_dir, phase_1_student_model_name))["model_state_dict"])
+        else:
+            print("Phase  I model dir {} not valid! training from new!".format(phase_1_student_model_dir))
+            
 student_model.to(device)
 print(student_model)
 #load teacher model 

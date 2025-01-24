@@ -5,8 +5,8 @@ import torch
 def get_entropy(x):
     # x: torch.Tensor, logits BEFORE softmax
     exp_x = torch.exp(x)
-    A = torch.sum(exp_x, dim=1)    # sum of exp(x_i)
-    B = torch.sum(x*exp_x, dim=1)  # sum of x_i * exp(x_i)
+    A = torch.sum(exp_x, dim=2)    # sum of exp(x_i)
+    B = torch.sum(x*exp_x, dim=2)  # sum of x_i * exp(x_i)
     return torch.log(A) - B/A
 
 import math
@@ -47,6 +47,7 @@ class CWSCNNModelWithEEConfig(PretrainedConfig):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.embedding_dim = kwargs['embedding_dim'] if 'embedding_dim' in kwargs else 300
+        self.max_position_embeddings = kwargs['max_position_embeddings'] if 'max_position_embeddings' in kwargs else 512
         self.hidden_size = kwargs['hidden_size'] if 'hidden_size' in kwargs else 300
         # self.conv1d_kernel = kwargs['conv1d_kernel'] if 'conv1d_kernel' in kwargs else [3]*6 
         self.label_num = kwargs['label_num'] if 'label_num' in kwargs else 5
@@ -98,9 +99,13 @@ class CWSCNNModelWithEE(nn.Module):
         self.conv1d_cls_layers = nn.ModuleList()
         self.classifier_list = nn.ModuleList()
         self.embedding = nn.Embedding(21128, self.config.embedding_dim)
+        # self.position_embeddings = nn.Embedding(self.config.max_position_embeddings, self.config.embedding_dim)
         self.proj_cls = ProjectClsLayer(self.config,input_hidden_size=config.conv1d_cls_out_channel_size_list[-1])
         self.dropout = nn.Dropout(self.config.dropout_ratio)
         self.activation = nn.ReLU()
+        # self.register_buffer(
+            # "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False
+        # )
         for i in range(self.config.conv1d_cls_layer_num): 
             self.conv1d_cls_layers.append(ConvClsLayer(config,
                                                        in_channel_size=config.conv1d_cls_in_channel_size_list[i],
@@ -108,7 +113,12 @@ class CWSCNNModelWithEE(nn.Module):
                                                        ))
         
     def forward( self, input_ids:torch.Tensor,**kwargs) -> torch.Tensor:
+        input_shape = input_ids.size()
+        seq_length = input_shape[1]
+        # position_ids = self.position_ids[:, : seq_length ]
+        # position_embeddings = self.position_embeddings(position_ids)
         input_x = self.embedding(input_ids)
+        # +position_embeddings
         logits_list = []
         for ind, layer in enumerate(self.conv1d_cls_layers):
             input_x, logits = layer(input_x)
@@ -128,6 +138,8 @@ class CWSCNNModelWithEE(nn.Module):
         """
         logits = None 
         uncertain_score_list = []
+        logits_list = []
+        
         is_force = False
         if force_layer is not None:
             force_layer = max(0,min(force_layer,6))
@@ -138,24 +150,28 @@ class CWSCNNModelWithEE(nn.Module):
                 is_force=True
                 break
             input_x, logits = layer(input_x)
+            logits_list.append(logits)
             # p = torch.softmax(logits[:,0:-1,1:],  dim=-1) #1*len *C
             # U_s = -p*torch.log(p)/torch.log(torch.LongTensor(4))
             # U_s.sum(dim=-1)
-            # # print(U_s.shape)
+            # print(logits.shape)
             # U_s.max(dim=1)
             U_s = get_uncertainty(logits)
-            # print(U_s.shape)
-            U_s = torch.max(U_s)
+            # print(U_s)
+            # # print(U_s.shape)
+            U_s = torch.max(U_s[:,1:-1]) #omit cls and sep
             uncertain_score_list.append(U_s)
             if force_layer is None and U_s<thres:
                 break
         else:
             hidden_x, logits = self.proj_cls(input_x)
-            ind = 7
+            logits_list.append(logits)
+            ind = 6
         return {"logits":logits,
                 "exit_layer":ind, 
                 "uncertainty_score":uncertain_score_list,
-                "is_force":is_force
+                "is_force":is_force,
+                "logits_list":logits_list
         }
 
 
@@ -171,9 +187,12 @@ class CWSCNNModel(nn.Module):
         self.config = config
         self.Cov1d_list = nn.ModuleList()
         self.embedding = nn.Embedding(21128, self.config.embedding_dim)
-        
+        # self.position_embeddings = nn.Embedding(self.config.max_position_embeddings, self.config.embedding_dim)
         self.dropout = nn.Dropout(self.config.dropout_ratio)
         self.activation = nn.ReLU()
+        # self.register_buffer(
+        #     "position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)), persistent=False
+        # )
         for i in range(self.config.conv1d_cls_layer_num): 
             # we need padding them according kernel 3, each side padding 1
             self.Cov1d_list.append(nn.Conv1d(in_channels=self.config.embedding_dim,
@@ -181,10 +200,17 @@ class CWSCNNModel(nn.Module):
                                              kernel_size = self.config.conv1d_kernel,
                                              padding="same"
                                              ))
-        self.proj_cls = ProjectClsLayer(config)
+        self.proj_cls = ProjectClsLayer(config,input_hidden_size=self.config.hidden_size)
         
     def forward( self, input_ids:torch.Tensor,**kwargs) -> torch.Tensor:
-        input_x = self.embedding(input_ids) #B,L,C
+        input_shape = input_ids.size()
+        # print(input_ids.shape)
+        seq_length = input_shape[1]
+        # position_ids = self.position_ids[:, : seq_length ]
+        # print(position_ids.shape)
+        # position_embeddings = self.position_embeddings(position_ids)
+        input_x = self.embedding(input_ids)
+        # +position_embeddings
         #transfer to B, C ,L
         input_x = input_x.permute(0,2,1)
         for ind, layer in enumerate(self.Cov1d_list):
