@@ -1,4 +1,5 @@
 import torch
+from segmentor import Segmentor
 def calculate_conv1d_kernel_weight_l1(filters:torch.Tensor):
     """ 
        filters: torch.Tensor, shape [output_channels, input_channels, kernel_size]
@@ -32,7 +33,7 @@ def prune_conv_outchanel_weights(filters, bias, prune_ratio):
     
     # 确定需要保留的输出通道数
     num_prune = int(prune_ratio * filters.shape[0])  # 要剪掉的输出通道数量
-    print(num_prune)
+    # print(num_prune)
     keep_indices = sorted_indices[num_prune:]  # 保留的输出通道索引
     
     # 根据保留索引重构权重张量
@@ -113,5 +114,24 @@ def prune_cnnee_model(cnn_model, prune_ratio_list = [0,0,0,0,0,0.5]):
             
     return cnn_model
 
+def main(args):
+    seg = Segmentor(args.model_dir)
+    cnn_model = seg.model
+    cnn_model = prune_cnnee_model(cnn_model, args.prune_ratio_list)
+    output_dir = args.output_model_dir
+    cnn_model.config.save_pretrained(output_dir)
+    seg.tokenizer.save_pretrained(output_dir)
+    torch.save({"model_state_dict":cnn_model.state_dict()}, output_dir+"/pytorch_model.bin")
+    print("pruned model saved to {}".format(output_dir))
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model_dir", type=str, default="./output/pku_CWSCNNModelWithEE_Phase_2_lr_0.0001_epoch_100_Sun-Jan-19-16:34:06-2025/")
+    parser.add_argument("--prune_ratio_list", nargs="+", type=float, default=[0.15,0.40,0.55,0.75,0.70,0.70])
+    parser.add_argument("--output_model_dir", type=str, default="./output/pku_pruned_CWSCNNModelWithEE_Phase_2_lr_0.0001_epoch_100_Sun-Jan-19-16:34:06-2025/")
+    args = parser.parse_args()
+    main(args)
 
 

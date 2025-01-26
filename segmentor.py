@@ -10,12 +10,16 @@ import numpy as np
 import torch
 from eval_utils import cws_evaluate_word_PRF
 import re 
+import onnxruntime as ort
 
 class Segmentor:
-    def __init__(self, model_dir, device="cpu", max_length=500, thres=0.5):
+    def __init__(self, model_dir,
+                 checkpoint_name="checkpoint_best.pt", 
+                 device="cpu", max_length=500, thres=0.5):
         self.device = device
-        self.thres = 0.5
-        self.load_cws_model(model_dir)
+        self.thres = thres
+        self.checkpoint_name = checkpoint_name
+        self.load_cws_model(model_dir,checkpoint_name=checkpoint_name)
         self.max_length = max_length
         
     def load_cws_model(self, model_dir, checkpoint_name="checkpoint_best.pt"):
@@ -23,13 +27,18 @@ class Segmentor:
         self.checkpoint_path = os.path.join(model_dir, checkpoint_name)
         self.model_name = self.config.model_name
         self.model_cls = model_cls_dict[self.config.model_name]
-        self.model = self.model_cls(self.config)
-        self.model.load_state_dict(torch.load(self.checkpoint_path)["model_state_dict"])
-        self.model.eval()
-        self.model.to(self.device)
+        if self.model_name.endswith("onnx"):
+            self.model = self.model_cls(model_dir)
+        else:
+            self.model = self.model_cls(self.config)
+            self.model.load_state_dict(torch.load(self.checkpoint_path)["model_state_dict"])
+            self.model.eval()
+            self.model.to(self.device)
         self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
         self.label_dict = label_dict
+
     
+
     def predict_logits(self, sentence, force_layer=None, thres=None):
         sentence = sentence.strip().replace("  "," ")
         # print(sentence)
@@ -45,6 +54,10 @@ class Segmentor:
         if self.model_name=="CWSCNNModelWithEE":
             _thres = thres if thres is not None else self.thres
             ret = self.model.predict(**inputs, thres=_thres, force_layer=force_layer )
+            ret["sentence"] = sentence
+            return ret
+        elif self.model_name.endswith("onnx"):
+            ret = self.model.predict(**inputs, thres=_thres,force_layer=force_layer)
             ret["sentence"] = sentence
             return ret
         else:
@@ -103,11 +116,12 @@ class Segmentor:
         label_list = []
         preds_list  = []
         pred_info = []
+        ret_dict = dict()
         for _data in dataiter["valid"]:
             for k,v in _data.items():
                 _data[k] = v.to(self.device)
             with torch.no_grad():
-                if self.model_name=="CWSCNNModelWithEE":
+                if self.model_name=="CWSCNNModelWithEE" or self.model_name.startswith("CWSCNNModelWithEE"):
                     ret = self.model.predict(**_data, thres=thres, force_layer=force_layer )
                     if logits_strategy=="mean":
                         # 将所有张量堆叠到一起
@@ -156,12 +170,11 @@ class Segmentor:
         new_label_list_str = label_dict.convert_ids2labels(new_label_list)
         new_preds_list_str = label_dict.convert_ids2labels(new_preds_list)
         prec,rec,f1 =  cws_evaluate_word_PRF(new_preds_list_str, new_label_list_str)
-        pred_info["precision"] = prec
-        pred_info["recall"] = rec 
-        pred_info["f1"] = f1 
+        ret_dict["precision"] = prec
+        ret_dict["recall"] = rec 
+        ret_dict["f1"] = f1 
         if verbose:
-            return pred_info
-        else:
-            return {"precision":prec, "recall":rec, "f1":f1}
+            ret_dict["pred_info"] = pred_info
+        return ret_dict
 
         

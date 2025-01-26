@@ -2,6 +2,25 @@ from transformers import  BertModel
 from torch import nn
 from transformers import PretrainedConfig
 import torch
+import os 
+import onnxruntime as ort
+import numpy as np 
+import re
+
+def get_entropy_np(x):
+    # x: np.ndarray, logits BEFORE softmax
+    exp_x = np.exp(x)
+    A = np.sum(exp_x, axis=2)    # sum of exp(x_i)
+    B = np.sum(x*exp_x, axis=2)  # sum of x_i * exp(x_i)
+    return np.log(A) - B/A
+
+def get_uncertainty_np(x):
+    x = x[:,:,1:-1]
+    # x: np.ndarray, logits BEFORE softmax
+    num_tags = x.shape[-1]
+    entropy = get_entropy_np(x)
+    return entropy / np.log(num_tags)
+
 def get_entropy(x):
     # x: torch.Tensor, logits BEFORE softmax
     exp_x = torch.exp(x)
@@ -11,7 +30,7 @@ def get_entropy(x):
 
 import math
 def get_uncertainty(x):
-    x = x[:,:,1:]
+    x = x[:,:,1:-1]
     # x: torch.Tensor, logits BEFORE softmax
     num_tags = x.size(-1)
     entropy_x = get_entropy(x)
@@ -172,13 +191,7 @@ class CWSCNNModelWithEE(nn.Module):
                 "uncertainty_score":uncertain_score_list,
                 "is_force":is_force,
                 "logits_list":logits_list
-        }
-
-
-
-
-
-                
+        }            
     
 
 class CWSCNNModel(nn.Module): 
@@ -221,15 +234,80 @@ class CWSCNNModel(nn.Module):
         hidden_x, logits = self.proj_cls(input_x)
         return logits
 
-    
 
+class CWSCNNModelWithEE_onnx():
+    def __init__(self, model_path, 
+                 device="cpu",
+                  max_length=500, 
+                  ):
+        self.model_path = model_path
+        self.load_onnx_model(model_path)
+
+    
+    def load_onnx_model(self, model_dir):
+        onnx_embedding_model_path = os.path.join(model_dir, "model_embedding.onnx") 
+        self.embedding_ort_session = ort.InferenceSession(onnx_embedding_model_path)
+        self.conv_ort_session_list = []
+        file_name_list = os.listdir(model_dir)
+        conv_file_name = [file_name  for file_name in file_name_list if file_name.startswith("conv") and file_name.endswith(".onnx")]
+        #sort conv_file_name conv_1.onnx conv_2.onnx 
+        conv_file_name.sort(key=lambda x: int(re.findall(r"\d+",x)[0]))
+        for conv_file in conv_file_name:
+            conv_ort_session = ort.InferenceSession(os.path.join(model_dir, conv_file))
+            self.conv_ort_session_list.append(conv_ort_session)
+        self.proj_cls_ort_session = ort.InferenceSession(os.path.join(model_dir, "proj_cls.onnx"))
+
+    def predict(self, input_ids, thres=0.55, force_layer=None, **kwargs):
+        if isinstance(input_ids, torch.Tensor):
+            input_ids = input_ids.tolist()
+        input_ids = np.array(input_ids, dtype=np.int64)
+        input_dict = {"input":input_ids}
+        embedding_output = self.embedding_ort_session.run(None, input_dict)[0]
+        conv_output = embedding_output
+        logits  = None 
+        uncertain_score_list = []
+        logits_list = []
+        if force_layer:
+            is_force = True
+        else:
+            is_force = False
+        for ind, conv_ort_session in enumerate(self.conv_ort_session_list):
+            if force_layer is not None and ind == force_layer:
+                break
+            conv_output = conv_ort_session.run(None, {"input":conv_output})
+            conv_output, conv_logits  = conv_output 
+            logits = conv_logits
+            logits_list.append(logits)
+            #calculate uncertainty
+            u_s = get_uncertainty_np(conv_logits)
+            uncertain_score_list.append(u_s)
+            u_s = np.max(u_s[:,1:-1])
+            if force_layer is None and u_s < thres:
+                break
+            
+        else:
+            proj_cls_output = self.proj_cls_ort_session.run(None, {"input":conv_output})
+            hidden_x, logits = proj_cls_output
+            logits_list.append(logits)
+        return {
+            "logits":torch.tensor(logits),
+            "exit_layer":ind, 
+            "uncertainty_score":uncertain_score_list,
+            "is_force":is_force,
+            "logits_list":logits_list
+            }
+
+       
 
 
 model_cls_dict = {"CWSCNNModel":CWSCNNModel,
                   "CWSCNNModelWithEE":CWSCNNModelWithEE,
-                  "CWSRoberta":CWSRoberta}
+                  "CWSRoberta":CWSRoberta,
+                  "CWSCNNModelWithEE_onnx":CWSCNNModelWithEE_onnx}
 
 
+
+    
 
 
 
