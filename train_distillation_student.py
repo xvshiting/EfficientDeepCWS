@@ -49,8 +49,8 @@ parser.add_argument("--early_stop", action="store_true", default=False)
 # early_stop_num = 10
 parser.add_argument("--early_stop_num", type=int, default=10)
 parser.add_argument("--refine", action="store_true", default=False)
-parser.add_argument("--refine_student_model_dir", type=str, default="./output/pku_CWSCNNModelWithEE_Phase_1_lr_0.0001_epoch_50_Sat-Jan-18-23:23:35-2025")
-parser.add_argument("--refine_student_model_name",type=str,default="checkpoint_best.pt" )
+parser.add_argument("--refine_student_model_dir", type=str, default="./output/pku_pruned_CWSCNNModelWithEE_Phase_2_lr_0.0001_epoch_100_Sun-Jan-19-16:34:06-2025")
+parser.add_argument("--refine_student_model_name",type=str,default="pytorch_model.bin" )
 args = parser.parse_args()
 
 #print all args
@@ -209,7 +209,7 @@ if phase_num==2: #need load phase 1 model
         config = PretrainedConfig.from_json_file(os.path.join(refine_student_model_dir,"config.json")) 
         student_model = CWSCNNModelWithEE(config)
         if os.path.exists(refine_student_model_dir):
-           student_model.load_state_dict(torch.load(os.path.join(refine_student_model_dir, refine_student_model_dir))["model_state_dict"])
+           student_model.load_state_dict(torch.load(os.path.join(refine_student_model_dir, refine_student_model_name))["model_state_dict"])
         else:
             print("Pruned model dir {} not valid! training from new!".format(refine_student_model_dir))
            

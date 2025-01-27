@@ -158,12 +158,14 @@ class CWSCNNModelWithEE(nn.Module):
         logits = None 
         uncertain_score_list = []
         logits_list = []
-        
+        flops = 0
         is_force = False
         if force_layer is not None:
             force_layer = max(0,min(force_layer,6))
          #early exit with uncertainty
         input_x = self.embedding(input_ids) 
+        batch_size, seq_length, embedding_dim = input_x.size()
+        flops += batch_size * seq_length * embedding_dim  # FLOPs for embedding lookup
         for ind, layer in enumerate(self.conv1d_cls_layers):
             if force_layer is not None and force_layer<ind: # 0<1 exit, 0=0 continue, 2>1 continue. 
                 is_force=True
@@ -175,6 +177,14 @@ class CWSCNNModelWithEE(nn.Module):
             # U_s.sum(dim=-1)
             # print(logits.shape)
             # U_s.max(dim=1)
+            # FLOPs for ConvClsLayer
+            in_channels = layer.conv1d.in_channels
+            out_channels = layer.conv1d.out_channels
+            kernel_size = layer.conv1d.kernel_size[0]
+            output_length = input_x.size(1)
+            flops += in_channels * out_channels * kernel_size * output_length * batch_size
+            flops += out_channels * 5 *  batch_size
+            flops += logits.numel() * 5 
             U_s = get_uncertainty(logits)
             # print(U_s)
             # # print(U_s.shape)
@@ -186,11 +196,17 @@ class CWSCNNModelWithEE(nn.Module):
             hidden_x, logits = self.proj_cls(input_x)
             logits_list.append(logits)
             ind = 6
+            # FLOPs for final ProjectClsLayer
+            input_features = hidden_x.size(-1)
+            output_features = logits.size(-1)
+            flops += input_features * output_features * batch_size
+            flops += output_features * 5 *batch_size
         return {"logits":logits,
                 "exit_layer":ind, 
                 "uncertainty_score":uncertain_score_list,
                 "is_force":is_force,
-                "logits_list":logits_list
+                "logits_list":logits_list,
+                "flops":flops
         }            
     
 
