@@ -80,10 +80,10 @@ The following table reports the performance of the final optimized DEEP-CWS mode
 
 | Dataset | F1 Score (%) | Inference Time (ms/sentence) | Model Size |
 |---------|--------------|-------------------------------|------------|
-| PKU     | 97.81        | 1.32                          | ~1.1M      |
-| MSR     | 98.72        | 1.44                          | ~1.1M      |
-| AS      | 97.39        | 1.58                          | ~1.1M      |
-| CITYU   | 98.21        | 1.40                          | ~1.1M      |
+| PKU     | 97.64        | 1.11                          | ~1.1M      |
+| MSR     | 97.72        | 0.75                          | ~1.1M      |
+| AS      | 97.59        | 0.11                          | ~1.1M      |
+| CITYU   | 96.94        | 0.79                         | ~1.1M      |
 ---
 
 
