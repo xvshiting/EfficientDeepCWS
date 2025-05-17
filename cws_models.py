@@ -313,7 +313,8 @@ class CWSCNNModelWithEE_onnx():
             "logits_list":logits_list
             }
 
-       
+
+# lightmodels     
 
 
 model_cls_dict = {"CWSCNNModel":CWSCNNModel,

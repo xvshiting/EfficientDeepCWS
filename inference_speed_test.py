@@ -23,7 +23,7 @@ os.environ["TORCH_NUM_THREADS"] = "1"
 def main(args):
     seg = Segmentor(args.model_dir)
     dataiter = get_normal_train_dataloader(seg.tokenizer, label_dict, batch_size=1,dataset_name=args.dataname)
-    # time_cost_list = []
+    time_cost_list = []
     char_num_list = []
     for d in tqdm(dataiter["test"]):
         char_num_list.append(d["input_ids"].shape[1])
